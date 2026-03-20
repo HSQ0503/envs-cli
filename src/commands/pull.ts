@@ -5,7 +5,7 @@ import inquirer from "inquirer";
 import { authenticate } from "../auth";
 import { readProjectConfig, decryptVault, readGlobalConfig, globalConfigExists } from "../vault";
 import { serializeEnv } from "../env-parser";
-import { gitPullVault } from "../git";
+import { gitPullVault, isVaultGitRepo, ensureVaultGitLinked } from "../git";
 
 export async function pullCommand(): Promise<void> {
   const config = readProjectConfig();
@@ -19,7 +19,16 @@ export async function pullCommand(): Promise<void> {
   // Sync from remote before reading local vault
   if (globalConfigExists()) {
     const globalConf = readGlobalConfig();
-    if (globalConf.remote?.enabled) {
+    if (globalConf.remote?.enabled && globalConf.remote.repoUrl) {
+      // Ensure vault dir is a git repo — auto-repair if not
+      if (!isVaultGitRepo()) {
+        try {
+          ensureVaultGitLinked(globalConf.remote.repoUrl);
+        } catch {
+          console.log(chalk.yellow("  ⚠ Remote sync is enabled but vault is not linked. Run `envs sync` to fix."));
+        }
+      }
+
       const pulled = gitPullVault();
       if (pulled) {
         console.log(chalk.gray("  ✓ Synced ↓"));

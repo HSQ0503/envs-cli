@@ -10,6 +10,7 @@ import {
   ghCreateRepo,
   cloneVaultRepo,
   initVaultGitRepo,
+  remoteHasContent,
   gitPullVault,
   gitPushVault,
   getVaultSyncStatus,
@@ -36,14 +37,23 @@ export async function setupRemoteSync(): Promise<RemoteConfig | null> {
         const repoName = "envs-vault";
 
         if (ghRepoExists(username, repoName)) {
-          // Existing repo — clone it (returning user on new machine)
-          console.log(chalk.gray(`  Found ${username}/${repoName} on GitHub, cloning...`));
           const repoUrl = `https://github.com/${username}/${repoName}.git`;
-          const cloned = cloneVaultRepo(repoUrl);
-          if (cloned) {
-            console.log(chalk.green("✓ Vault synced from GitHub"));
+
+          // Check if remote has actual content (commits)
+          if (remoteHasContent(repoUrl)) {
+            // Case 2: Returning user on new machine — clone existing vault
+            console.log(chalk.gray(`  Found ${username}/${repoName} on GitHub, cloning...`));
+            const cloned = cloneVaultRepo(repoUrl);
+            if (cloned) {
+              console.log(chalk.green("✓ Vault synced from GitHub"));
+            } else {
+              // Clone failed but repo exists — init locally and link
+              initVaultGitRepo(repoUrl);
+              console.log(chalk.green("✓ Vault connected to GitHub"));
+            }
           } else {
-            // Empty repo or clone failed, init fresh
+            // Repo exists but is empty — init locally and push
+            console.log(chalk.gray(`  Found empty repo ${username}/${repoName}, initializing...`));
             initVaultGitRepo(repoUrl);
             console.log(chalk.green("✓ Vault connected to GitHub"));
           }
@@ -90,10 +100,19 @@ export async function setupRemoteSync(): Promise<RemoteConfig | null> {
         ]);
 
         const url = repoUrl.trim();
-        const cloned = cloneVaultRepo(url);
-        if (cloned) {
-          console.log(chalk.green("✓ Vault synced from remote"));
+
+        if (remoteHasContent(url)) {
+          // Existing vault — clone it
+          console.log(chalk.gray("  Cloning existing vault..."));
+          const cloned = cloneVaultRepo(url);
+          if (cloned) {
+            console.log(chalk.green("✓ Vault synced from remote"));
+          } else {
+            initVaultGitRepo(url);
+            console.log(chalk.green("✓ Vault connected to remote"));
+          }
         } else {
+          // New/empty repo — init locally and push
           initVaultGitRepo(url);
           console.log(chalk.green("✓ Vault connected to remote"));
         }

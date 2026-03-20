@@ -15,7 +15,7 @@ import {
 } from "../vault";
 import { parseEnvFile } from "../env-parser";
 import { setupRemoteSync } from "./sync";
-import { gitPushVault } from "../git";
+import { gitPushVault, isVaultGitRepo, ensureVaultGitLinked } from "../git";
 import type { ProjectConfig, DecryptedVault } from "../types";
 
 const ENV_PATTERN = /^\.env(\..+)?$/;
@@ -180,7 +180,15 @@ export async function initCommand(): Promise<void> {
   // Sync to remote if enabled
   if (Object.keys(vaultData.environments).length > 0) {
     const globalConf = readGlobalConfig();
-    if (globalConf.remote?.enabled) {
+    if (globalConf.remote?.enabled && globalConf.remote.repoUrl) {
+      if (!isVaultGitRepo()) {
+        try {
+          ensureVaultGitLinked(globalConf.remote.repoUrl);
+        } catch {
+          console.log(chalk.yellow("  ⚠ Remote sync is enabled but vault is not linked. Run `envs sync` to fix."));
+        }
+      }
+
       const pushed = gitPushVault(projectName);
       if (pushed) {
         console.log(chalk.gray("  ✓ Synced ↑"));

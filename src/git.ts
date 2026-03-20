@@ -42,18 +42,21 @@ export function ghRepoExists(username: string, repo: string): boolean {
 }
 
 export function ghCreateRepo(repo: string): string | null {
-  try {
-    exec(`gh repo create ${repo} --private --confirm`);
-    const username = getGhUsername();
-    if (username) return `https://github.com/${username}/${repo}.git`;
-  } catch {
-    // Fallback: try without --confirm for older gh versions
+  const username = getGhUsername();
+  if (!username) return null;
+
+  // Use --clone=false to prevent interactive clone prompt
+  const variants = [
+    `gh repo create ${repo} --private --clone=false`,
+    `gh repo create ${repo} --private`,
+  ];
+
+  for (const cmd of variants) {
     try {
-      exec(`gh repo create ${repo} --private`);
-      const username = getGhUsername();
-      if (username) return `https://github.com/${username}/${repo}.git`;
+      exec(cmd);
+      return `https://github.com/${username}/${repo}.git`;
     } catch {
-      return null;
+      continue;
     }
   }
   return null;
@@ -66,6 +69,11 @@ export function isGitAvailable(): boolean {
 export function isVaultGitRepo(): boolean {
   if (!fs.existsSync(VAULT_DIR)) return false;
   return execSafe("git rev-parse --is-inside-work-tree", VAULT_DIR) === "true";
+}
+
+export function remoteHasContent(repoUrl: string): boolean {
+  const output = execSafe(`git ls-remote ${repoUrl}`);
+  return output !== null && output.trim().length > 0;
 }
 
 export function cloneVaultRepo(repoUrl: string): boolean {
@@ -114,11 +122,10 @@ export function initVaultGitRepo(repoUrl: string): void {
 
   if (!isVaultGitRepo()) {
     exec("git init", VAULT_DIR);
-    // Set default branch to main
     execSafe("git branch -M main", VAULT_DIR);
   }
 
-  // Check if remote already exists
+  // Set up remote
   const remotes = execSafe("git remote", VAULT_DIR) || "";
   if (!remotes.includes("origin")) {
     exec(`git remote add origin ${repoUrl}`, VAULT_DIR);
@@ -126,29 +133,43 @@ export function initVaultGitRepo(repoUrl: string): void {
     exec(`git remote set-url origin ${repoUrl}`, VAULT_DIR);
   }
 
-  // Initial commit if vault has files
-  const files = fs.readdirSync(VAULT_DIR).filter((f) => f.endsWith(".enc.json"));
-  if (files.length > 0) {
-    exec("git add .", VAULT_DIR);
-    const status = execSafe("git status --porcelain", VAULT_DIR) || "";
-    if (status) {
-      exec('git commit -m "Initial vault sync"', VAULT_DIR);
+  // Pull from remote if it has content
+  try {
+    execSafe("git fetch origin", VAULT_DIR);
+    const remoteBranch = execSafe("git ls-remote --heads origin main", VAULT_DIR);
+    if (remoteBranch && remoteBranch.trim().length > 0) {
+      execSafe("git pull origin main --allow-unrelated-histories", VAULT_DIR);
     }
-  } else {
-    // Create an initial commit so the branch exists
-    const placeholder = path.join(VAULT_DIR, ".gitkeep");
-    fs.writeFileSync(placeholder, "");
-    exec("git add .", VAULT_DIR);
-    exec('git commit -m "Initialize vault"', VAULT_DIR);
+  } catch {
+    // Remote might be empty, that's fine
+  }
+
+  // Create initial commit if no commits exist yet
+  const hasCommits = execSafe("git rev-parse HEAD", VAULT_DIR) !== null;
+  if (!hasCommits) {
+    const files = fs.readdirSync(VAULT_DIR).filter((f) => f.endsWith(".enc.json"));
+    if (files.length > 0) {
+      exec("git add .", VAULT_DIR);
+      exec('git commit -m "Initial vault sync"', VAULT_DIR);
+    } else {
+      const placeholder = path.join(VAULT_DIR, ".gitkeep");
+      fs.writeFileSync(placeholder, "");
+      exec("git add .", VAULT_DIR);
+      exec('git commit -m "Initialize vault"', VAULT_DIR);
+    }
   }
 
   // Push to remote
   try {
     exec("git push -u origin main", VAULT_DIR);
   } catch {
-    // Remote might not be ready yet or might need different branch name
     execSafe("git push -u origin master", VAULT_DIR);
   }
+}
+
+export function ensureVaultGitLinked(repoUrl: string): void {
+  if (isVaultGitRepo()) return;
+  initVaultGitRepo(repoUrl);
 }
 
 export function gitPushVault(projectName: string): boolean {

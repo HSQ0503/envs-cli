@@ -4,7 +4,7 @@ import chalk from "chalk";
 import { authenticate } from "../auth";
 import { readProjectConfig, encryptAndStoreVault, readGlobalConfig, globalConfigExists } from "../vault";
 import { parseEnvFile } from "../env-parser";
-import { gitPushVault } from "../git";
+import { gitPushVault, isVaultGitRepo, ensureVaultGitLinked } from "../git";
 import type { DecryptedVault } from "../types";
 
 export async function pushCommand(): Promise<void> {
@@ -47,7 +47,16 @@ export async function pushCommand(): Promise<void> {
   // Sync to remote if enabled
   if (globalConfigExists()) {
     const globalConf = readGlobalConfig();
-    if (globalConf.remote?.enabled) {
+    if (globalConf.remote?.enabled && globalConf.remote.repoUrl) {
+      // Ensure vault dir is a git repo — auto-repair if not
+      if (!isVaultGitRepo()) {
+        try {
+          ensureVaultGitLinked(globalConf.remote.repoUrl);
+        } catch {
+          console.log(chalk.yellow("  ⚠ Remote sync is enabled but vault is not linked. Run `envs sync` to fix."));
+        }
+      }
+
       const pushed = gitPushVault(config.projectName);
       if (pushed) {
         console.log(chalk.gray("  ✓ Synced ↑"));
