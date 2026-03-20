@@ -117,6 +117,15 @@ export async function initCommand(): Promise<void> {
     return;
   }
 
+  // Pull latest vault data from remote before listing projects
+  if (globalConfigExists()) {
+    const globalConf = readGlobalConfig();
+    if (globalConf.remote?.enabled) {
+      const { gitPullVault: pullVault } = await import("../git");
+      pullVault();
+    }
+  }
+
   // Check if vault has existing projects the user can link to
   const vaultFiles = listVaultFiles();
   if (vaultFiles.length > 0) {
