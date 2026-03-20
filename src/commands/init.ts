@@ -31,10 +31,23 @@ const DEFAULT_ENV_MAP: Record<string, string> = {
 const IGNORED_BY_DEFAULT = [".env.local", ".env.development.local", ".env.production.local"];
 
 export async function initCommand(): Promise<void> {
+  // Global setup first (password + remote sync) — regardless of project state
+  const isFirstTimeSetup = !globalConfigExists();
+  const key = await authenticate();
+
+  if (isFirstTimeSetup) {
+    console.log("");
+    const remote = await setupRemoteSync();
+    if (remote) {
+      const config = readGlobalConfig();
+      config.remote = remote;
+      writeGlobalConfig(config);
+    }
+  }
+
+  // Now check if this project is already initialized
   const existing = readProjectConfig();
   if (existing) {
-    // Check if vault already has data for this project (e.g. cloned from remote)
-    const key = await authenticate();
     const vaultData = decryptVault(existing.projectId, key);
     if (vaultData) {
       console.log(
@@ -51,23 +64,6 @@ export async function initCommand(): Promise<void> {
       console.log(chalk.yellow("⚠ Already initialized. Project ID: " + existing.projectId));
     }
     return;
-  }
-
-  // Track whether this is a first-time global setup
-  const isFirstTimeSetup = !globalConfigExists();
-
-  // Authenticate (sets up master password if first time)
-  const key = await authenticate();
-
-  // If first time global setup, offer remote sync
-  if (isFirstTimeSetup) {
-    console.log("");
-    const remote = await setupRemoteSync();
-    if (remote) {
-      const config = readGlobalConfig();
-      config.remote = remote;
-      writeGlobalConfig(config);
-    }
   }
 
   // Generate project ID
