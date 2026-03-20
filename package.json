@@ -1,0 +1,46 @@
+{
+  "name": "envs-cli",
+  "version": "0.1.0",
+  "description": "Encrypted vault for your .env files. Push, pull, and sync environment variables across machines.",
+  "main": "dist/index.js",
+  "bin": {
+    "envs": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs --dts --clean",
+    "dev": "tsx src/index.ts",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "env",
+    "dotenv",
+    "vault",
+    "encrypted",
+    "cli",
+    "secrets",
+    "environment-variables"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HSQ0503/envs-cli"
+  },
+  "author": "Shouqi Han",
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "commander": "^14.0.3",
+    "inquirer": "^8.2.7"
+  },
+  "devDependencies": {
+    "@types/inquirer": "^9.0.9",
+    "@types/node": "^25.5.0",
+    "tsup": "^8.5.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
