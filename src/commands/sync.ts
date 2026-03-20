@@ -18,12 +18,34 @@ import {
 import type { RemoteConfig } from "../types";
 
 export async function setupRemoteSync(): Promise<RemoteConfig | null> {
-  // Tier 1: GitHub CLI
+  // Explain what remote sync is
+  console.log(chalk.cyan("── Remote Sync ──"));
+  console.log(
+    chalk.gray(
+      "  Remote sync lets you access your encrypted .env files from any machine.\n" +
+      "  Your variables are encrypted locally — only the encrypted vault is stored\n" +
+      "  in a private Git repo. No one can read your secrets without your password."
+    )
+  );
+  console.log("");
+
+  // Tier 1: GitHub CLI detected and authenticated
   if (isGhAvailable() && isGhAuthenticated()) {
     const username = getGhUsername();
     if (!username) {
       console.log(chalk.yellow("⚠ Could not determine GitHub username."));
     } else {
+      console.log(
+        chalk.green("  ✓ GitHub CLI detected") +
+        chalk.gray(` (logged in as ${username})`)
+      );
+      console.log(
+        chalk.gray(
+          "  We can automatically create a private repo to sync your vault."
+        )
+      );
+      console.log("");
+
       const { enable } = await inquirer.prompt([
         {
           type: "confirm",
@@ -39,32 +61,28 @@ export async function setupRemoteSync(): Promise<RemoteConfig | null> {
         if (ghRepoExists(username, repoName)) {
           const repoUrl = `https://github.com/${username}/${repoName}.git`;
 
-          // Check if remote has actual content (commits)
           if (remoteHasContent(repoUrl)) {
-            // Case 2: Returning user on new machine — clone existing vault
             console.log(chalk.gray(`  Found ${username}/${repoName} on GitHub, cloning...`));
             const cloned = cloneVaultRepo(repoUrl);
             if (cloned) {
               console.log(chalk.green("✓ Vault synced from GitHub"));
             } else {
-              // Clone failed but repo exists — init locally and link
               initVaultGitRepo(repoUrl);
               console.log(chalk.green("✓ Vault connected to GitHub"));
             }
           } else {
-            // Repo exists but is empty — init locally and push
             console.log(chalk.gray(`  Found empty repo ${username}/${repoName}, initializing...`));
             initVaultGitRepo(repoUrl);
             console.log(chalk.green("✓ Vault connected to GitHub"));
           }
           return { enabled: true, method: "gh", repoUrl };
         } else {
-          // Create new repo
           console.log(chalk.gray(`  Creating private repo ${username}/${repoName}...`));
           const repoUrl = ghCreateRepo(repoName);
           if (repoUrl) {
             initVaultGitRepo(repoUrl);
             console.log(chalk.green("✓ Remote sync enabled via GitHub"));
+            console.log(chalk.gray(`  Your vault syncs to: ${repoUrl}`));
             return { enabled: true, method: "gh", repoUrl };
           } else {
             console.log(chalk.yellow("⚠ Failed to create GitHub repo. Continuing local-only."));
@@ -72,63 +90,96 @@ export async function setupRemoteSync(): Promise<RemoteConfig | null> {
         }
       }
     }
+
+    // User declined gh sync — don't ask again for git
+    if (!isGitAvailable()) {
+      return localOnlyMessage();
+    }
+    return localOnlyMessage();
   }
 
-  // Tier 2: Git available
+  // Tier 2: No gh, but git is available
   if (isGitAvailable()) {
-    // Only ask if we didn't already ask via gh
-    const alreadyDeclined = isGhAvailable() && isGhAuthenticated();
-    if (!alreadyDeclined) {
-      const { enable } = await inquirer.prompt([
+    console.log(chalk.yellow("  GitHub CLI not detected."));
+    console.log(
+      chalk.gray(
+        "  To sync across machines, you need a private Git repo to store your\n" +
+        "  encrypted vault. You can use GitHub, GitLab, Bitbucket, or any Git host.\n" +
+        "\n" +
+        "  How to set it up:\n" +
+        "  1. Create a private repo (e.g. \"envs-vault\") on your Git host\n" +
+        "  2. Copy the repo URL (HTTPS or SSH)\n" +
+        "  3. Paste it below\n" +
+        "\n" +
+        "  On your next machine, run `envs init` and paste the same URL to sync."
+      )
+    );
+    console.log("");
+
+    const { enable } = await inquirer.prompt([
+      {
+        type: "list",
+        name: "enable",
+        message: "What would you like to do?",
+        choices: [
+          { name: "I have a repo URL — set up remote sync", value: "yes" },
+          { name: "Skip for now — I'll use local only", value: "no" },
+        ],
+      },
+    ]);
+
+    if (enable === "yes") {
+      const { repoUrl } = await inquirer.prompt([
         {
-          type: "confirm",
-          name: "enable",
-          message: "Enable remote sync via Git?",
-          default: true,
+          type: "input",
+          name: "repoUrl",
+          message: "Repo URL:",
+          validate: (input: string) =>
+            input.trim().length > 0 || "Please enter a repo URL",
         },
       ]);
 
-      if (enable) {
-        const { repoUrl } = await inquirer.prompt([
-          {
-            type: "input",
-            name: "repoUrl",
-            message: "Paste your private vault repo URL:",
-            validate: (input: string) =>
-              input.trim().length > 0 || "Please enter a repo URL",
-          },
-        ]);
+      const url = repoUrl.trim();
 
-        const url = repoUrl.trim();
-
-        if (remoteHasContent(url)) {
-          // Existing vault — clone it
-          console.log(chalk.gray("  Cloning existing vault..."));
-          const cloned = cloneVaultRepo(url);
-          if (cloned) {
-            console.log(chalk.green("✓ Vault synced from remote"));
-          } else {
-            initVaultGitRepo(url);
-            console.log(chalk.green("✓ Vault connected to remote"));
-          }
+      if (remoteHasContent(url)) {
+        console.log(chalk.gray("  Cloning existing vault..."));
+        const cloned = cloneVaultRepo(url);
+        if (cloned) {
+          console.log(chalk.green("✓ Vault synced from remote"));
         } else {
-          // New/empty repo — init locally and push
           initVaultGitRepo(url);
           console.log(chalk.green("✓ Vault connected to remote"));
         }
-        return { enabled: true, method: "git", repoUrl: url };
+      } else {
+        initVaultGitRepo(url);
+        console.log(chalk.green("✓ Vault connected to remote"));
       }
+      console.log(
+        chalk.gray("  On your next machine, run `envs init` and paste the same URL.")
+      );
+      return { enabled: true, method: "git", repoUrl: url };
     }
+
+    return localOnlyMessage();
   }
 
-  // Tier 3: Local only
-  if (!isGitAvailable()) {
-    console.log(chalk.gray("  Git not found. Using local vault only."));
-  } else {
-    console.log(
-      chalk.gray("  Using local vault only. Run `envs sync` later to enable remote sync.")
-    );
-  }
+  // Tier 3: No git at all
+  console.log(chalk.yellow("  Git is not installed on this machine."));
+  console.log(
+    chalk.gray(
+      "  Remote sync requires Git. Your vault will be stored locally only.\n" +
+      "  Install Git and run `envs sync` later to enable remote sync."
+    )
+  );
+  console.log("");
+  return { enabled: false, method: null, repoUrl: null };
+}
+
+function localOnlyMessage(): RemoteConfig {
+  console.log("");
+  console.log(chalk.gray("  Using local vault only. Your .env files are encrypted on this machine."));
+  console.log(chalk.gray("  You can enable remote sync anytime with `envs sync`."));
+  console.log("");
   return { enabled: false, method: null, repoUrl: null };
 }
 
