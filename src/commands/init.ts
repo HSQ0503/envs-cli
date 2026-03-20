@@ -12,6 +12,7 @@ import {
   readGlobalConfig,
   writeGlobalConfig,
   decryptVault,
+  listVaultFiles,
 } from "../vault";
 import { parseEnvFile } from "../env-parser";
 import { setupRemoteSync } from "./sync";
@@ -66,7 +67,88 @@ export async function initCommand(): Promise<void> {
     return;
   }
 
-  // Generate project ID
+  // Check if vault has existing projects the user can link to
+  const vaultFiles = listVaultFiles();
+  if (vaultFiles.length > 0) {
+    const linked = await offerLinkToExisting(vaultFiles, key);
+    if (linked) return;
+  }
+
+  // New project — generate ID and set up from scratch
+  await initNewProject(key);
+}
+
+async function offerLinkToExisting(
+  vaultFiles: import("../types").VaultFile[],
+  key: Buffer
+): Promise<boolean> {
+  // Build choices from vault projects, showing env/variable counts
+  const choices: { name: string; value: string }[] = [];
+
+  for (const vf of vaultFiles) {
+    try {
+      const vault = decryptVault(vf.projectId, key);
+      if (vault) {
+        const envNames = Object.keys(vault.environments);
+        const varCount = envNames.reduce(
+          (sum, e) => sum + Object.keys(vault.environments[e]).length,
+          0
+        );
+        choices.push({
+          name: `Link to "${vf.projectName}" (${envNames.join(", ")}) — ${varCount} variables`,
+          value: vf.projectId,
+        });
+      }
+    } catch {
+      // Can't decrypt — different password, skip
+    }
+  }
+
+  if (choices.length === 0) return false;
+
+  choices.push({ name: "Create a new project", value: "__new__" });
+
+  console.log("");
+  const { selected } = await inquirer.prompt([
+    {
+      type: "list",
+      name: "selected",
+      message: "Found existing projects in vault:",
+      choices,
+    },
+  ]);
+
+  if (selected === "__new__") return false;
+
+  // Link to the selected project
+  const vaultFile = vaultFiles.find((vf) => vf.projectId === selected)!;
+  const vault = decryptVault(selected, key)!;
+  const envNames = Object.keys(vault.environments);
+
+  // Build environment file mapping
+  const environments: Record<string, string> = {};
+  for (const envName of envNames) {
+    const defaultFile =
+      envName === "development" ? ".env" : `.env.${envName}`;
+    environments[envName] = defaultFile;
+  }
+
+  const config: ProjectConfig = {
+    projectId: selected,
+    projectName: vaultFile.projectName,
+    environments,
+    ignore: [],
+  };
+  writeProjectConfig(config);
+  updateGitignore(Object.values(environments), []);
+
+  console.log(chalk.green(`✓ Linked to "${vaultFile.projectName}" (${selected})`));
+  console.log(chalk.gray(`  Environments: ${envNames.join(", ")}`));
+  console.log(chalk.gray("  Run `envs pull` to restore your .env files."));
+  return true;
+}
+
+async function initNewProject(key: Buffer): Promise<void> {
   const projectId = generateProjectId();
 
   // Get project name from directory

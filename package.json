@@ -1,6 +1,6 @@
 {
   "name": "envs-cli",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Encrypted vault for your .env files. Push, pull, and sync environment variables across machines.",
   "main": "dist/index.js",
   "bin": {
