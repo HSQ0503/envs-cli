@@ -45,8 +45,8 @@ export function writeGlobalConfig(config: GlobalConfig): void {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
 }
 
-export function setupMasterPassword(password: string): Buffer {
-  const salt = generateSalt();
+export function setupMasterPassword(password: string, existingSalt?: string): Buffer {
+  const salt = existingSalt || generateSalt();
   const key = deriveKey(password, salt);
   const verificationHash = createVerificationHash(key);
 
@@ -59,6 +59,26 @@ export function setupMasterPassword(password: string): Buffer {
   sessionKey = key;
   cacheKey(key);
   return key;
+}
+
+export function tryDecryptWithPassword(password: string, vaultFile: VaultFile): boolean {
+  try {
+    const key = deriveKey(password, vaultFile.salt);
+    decrypt(vaultFile.data, key, vaultFile.iv, vaultFile.authTag);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function getVaultSalt(): string | null {
+  ensureVaultDirs();
+  const files = fs.readdirSync(VAULT_DIR).filter((f) => f.endsWith(".enc.json"));
+  if (files.length === 0) return null;
+  const vaultFile: VaultFile = JSON.parse(
+    fs.readFileSync(path.join(VAULT_DIR, files[0]), "utf8")
+  );
+  return vaultFile.salt;
 }
 
 export function verifyPassword(password: string): Buffer | null {

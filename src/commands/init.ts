@@ -13,9 +13,12 @@ import {
   writeGlobalConfig,
   decryptVault,
   listVaultFiles,
+  setupMasterPassword,
+  getVaultSalt,
+  tryDecryptWithPassword,
 } from "../vault";
+import { deriveKey } from "../crypto";
 import { parseEnvFile } from "../env-parser";
-import { setupRemoteSync } from "./sync";
 import { gitPushVault, isVaultGitRepo, ensureVaultGitLinked } from "../git";
 import type { ProjectConfig, DecryptedVault } from "../types";
 
@@ -32,18 +35,65 @@ const DEFAULT_ENV_MAP: Record<string, string> = {
 const IGNORED_BY_DEFAULT = [".env.local", ".env.development.local", ".env.production.local"];
 
 export async function initCommand(): Promise<void> {
-  // Global setup first (password + remote sync) — regardless of project state
   const isFirstTimeSetup = !globalConfigExists();
-  const key = await authenticate();
+  let key!: Buffer;
 
   if (isFirstTimeSetup) {
+    // Step 1: Set up remote sync FIRST (before password) so we can
+    // clone existing vault and use its salt for key derivation
     console.log("");
-    const remote = await setupRemoteSync();
+    const remote = await firstTimeSetup();
+
+    // Step 2: Check if the cloned vault has files with an existing salt
+    const vaultSalt = getVaultSalt();
+
+    if (vaultSalt) {
+      // Returning user on new machine — use vault's salt
+      console.log(
+        chalk.yellow("Found existing vault data — enter your master password.")
+      );
+
+      const vaultFiles = listVaultFiles();
+
+      let verified = false;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const { password } = await inquirer.prompt([
+          {
+            type: "password",
+            name: "password",
+            message: "Master password:",
+            mask: "*",
+          },
+        ]);
+
+        // Verify against actual vault file
+        if (vaultFiles.length > 0 && tryDecryptWithPassword(password, vaultFiles[0])) {
+          key = setupMasterPassword(password, vaultSalt);
+          console.log(chalk.green("✓ Password verified."));
+          verified = true;
+          break;
+        } else {
+          console.log(chalk.red("✗ Incorrect password."));
+        }
+      }
+
+      if (!verified) {
+        console.log(chalk.red("✗ Too many failed attempts."));
+        process.exit(1);
+      }
+    } else {
+      // Brand new user — create password with new salt
+      key = await createNewPassword();
+    }
+
+    // Save remote config
     if (remote) {
       const config = readGlobalConfig();
       config.remote = remote;
       writeGlobalConfig(config);
     }
+  } else {
+    key = await authenticate();
   }
 
   // Now check if this project is already initialized
@@ -76,6 +126,56 @@ export async function initCommand(): Promise<void> {
 
   // New project — generate ID and set up from scratch
   await initNewProject(key);
+}
+
+async function firstTimeSetup(): Promise<import("../types").RemoteConfig | null> {
+  // Ensure vault directory exists before cloning
+  const { ensureVaultDirs } = await import("../vault");
+  ensureVaultDirs();
+  // Set up remote sync BEFORE password so we can clone vault and use its salt
+  const { setupRemoteSync: doSetup } = await import("./sync");
+  const remote = await doSetup();
+  return remote;
+}
+
+async function createNewPassword(): Promise<Buffer> {
+  console.log(
+    chalk.yellow("First time setup — please create a master password.")
+  );
+  console.log(
+    chalk.gray("This password encrypts all your env files. Don't forget it!")
+  );
+
+  const { password } = await inquirer.prompt([
+    {
+      type: "password",
+      name: "password",
+      message: "Create master password:",
+      mask: "*",
+      validate: (input: string) =>
+        input.length >= 8 || "Password must be at least 8 characters",
+    },
+  ]);
+
+  const { confirm } = await inquirer.prompt([
+    {
+      type: "password",
+      name: "confirm",
+      message: "Confirm master password:",
+      mask: "*",
+      validate: (input: string) =>
+        input === password || "Passwords do not match",
+    },
+  ]);
+
+  if (confirm !== password) {
+    console.log(chalk.red("✗ Passwords do not match."));
+    process.exit(1);
+  }
+
+  const key = setupMasterPassword(password);
+  console.log(chalk.green("✓ Master password set."));
+  return key;
 }
 
 async function offerLinkToExisting(
