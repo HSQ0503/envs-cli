@@ -2,8 +2,9 @@ import fs from "fs";
 import path from "path";
 import chalk from "chalk";
 import { authenticate } from "../auth";
-import { readProjectConfig, encryptAndStoreVault } from "../vault";
+import { readProjectConfig, encryptAndStoreVault, readGlobalConfig, globalConfigExists } from "../vault";
 import { parseEnvFile } from "../env-parser";
+import { gitPushVault } from "../git";
 import type { DecryptedVault } from "../types";
 
 export async function pushCommand(): Promise<void> {
@@ -42,6 +43,19 @@ export async function pushCommand(): Promise<void> {
   }
 
   encryptAndStoreVault(config.projectId, config.projectName, vaultData, key);
+
+  // Sync to remote if enabled
+  if (globalConfigExists()) {
+    const globalConf = readGlobalConfig();
+    if (globalConf.remote?.enabled) {
+      const pushed = gitPushVault(config.projectName);
+      if (pushed) {
+        console.log(chalk.gray("  ✓ Synced ↑"));
+      } else {
+        console.log(chalk.yellow("  ⚠ Remote sync failed (changes saved locally). Run `envs sync` to retry."));
+      }
+    }
+  }
 
   console.log(
     chalk.gray(`\n  Total: ${totalVars} variables across ${Object.keys(vaultData.environments).length} environments`)

@@ -3,8 +3,9 @@ import path from "path";
 import chalk from "chalk";
 import inquirer from "inquirer";
 import { authenticate } from "../auth";
-import { readProjectConfig, decryptVault } from "../vault";
+import { readProjectConfig, decryptVault, readGlobalConfig, globalConfigExists } from "../vault";
 import { serializeEnv } from "../env-parser";
+import { gitPullVault } from "../git";
 
 export async function pullCommand(): Promise<void> {
   const config = readProjectConfig();
@@ -14,6 +15,19 @@ export async function pullCommand(): Promise<void> {
   }
 
   const key = await authenticate();
+
+  // Sync from remote before reading local vault
+  if (globalConfigExists()) {
+    const globalConf = readGlobalConfig();
+    if (globalConf.remote?.enabled) {
+      const pulled = gitPullVault();
+      if (pulled) {
+        console.log(chalk.gray("  ✓ Synced ↓"));
+      } else {
+        console.log(chalk.yellow("  ⚠ Remote sync failed (using local vault). Run `envs sync` to retry."));
+      }
+    }
+  }
 
   const vault = decryptVault(config.projectId, key);
   if (!vault) {

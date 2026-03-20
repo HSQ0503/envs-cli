@@ -24,6 +24,8 @@ envs push
 envs pull
 ```
 
+On first run, `envs init` will offer to set up remote sync via GitHub (if `gh` CLI is installed) or any Git remote. This creates a private `envs-vault` repo that syncs your encrypted vault across machines automatically.
+
 ## Commands
 
 ### `envs init`
@@ -128,18 +130,98 @@ $ envs env add staging
 ✓ Added environment "staging" → .env.staging
 ```
 
+### `envs sync`
+
+Enable or run remote vault sync. If remote sync isn't configured yet, walks you through setup. If already configured, pulls then pushes to sync.
+
+```bash
+# First time — set up remote sync
+$ envs sync
+Setting up remote sync...
+? Enable remote sync via GitHub? Yes
+  Creating private repo HSQ0503/envs-vault...
+✓ Remote sync enabled via GitHub
+✓ All vault files synced to remote.
+
+# After setup — manual sync
+$ envs sync
+  Pulling from remote...
+  ✓ Synced ↓
+  Pushing to remote...
+  ✓ Synced ↑
+✓ Vault synced.
+```
+
+### `envs sync status`
+
+Check the current sync state.
+
+```bash
+$ envs sync status
+Remote: enabled (GitHub via gh)
+Repo:   https://github.com/HSQ0503/envs-vault.git
+Status: ✓ in sync (last synced 2 minutes ago)
+```
+
+### `envs sync disable`
+
+Disable remote sync without deleting the remote repo.
+
+```bash
+$ envs sync disable
+✓ Remote sync disabled. Your vault files remain on the remote but will no longer auto-sync.
+  To re-enable: envs sync
+```
+
+## Remote Sync
+
+`envs` can sync your encrypted vault across machines using Git as the transport layer. Your secrets never leave the encrypted vault — Git only sees `.enc.json` blobs.
+
+### Three-Tier Detection
+
+| Priority | Requirement | What happens |
+|----------|------------|--------------|
+| Tier 1 | `gh` CLI installed and authenticated | Auto-creates a private `envs-vault` repo on your GitHub |
+| Tier 2 | `git` installed | Asks you to paste any private repo URL (GitHub, GitLab, Bitbucket, etc.) |
+| Tier 3 | Neither available | Local-only mode (existing behavior) |
+
+### How Sync Works
+
+- **`envs push`** — after encrypting locally, auto-commits and pushes to the remote vault repo
+- **`envs pull`** — pulls from remote before decrypting, so you always get the latest
+- **Failures are non-blocking** — if the remote is unreachable, local operations still succeed with a warning
+- **`envs sync`** — enable remote sync later, or manually retry a failed sync
+
+### New Machine Setup
+
+```bash
+# 1. Install envs on the new machine
+npm install -g envs-cli
+
+# 2. Init in any project directory — envs detects your existing vault repo
+envs init
+# → Found envs-vault on GitHub, cloning...
+# → ✓ Vault synced from GitHub
+
+# 3. Pull your env files
+envs pull
+# → ✓ Pulled 12 variables → .env
+```
+
 ## How It Works
 
 ### Vault Structure
 
 ```
 ~/.envs/
-├── config.json              # master salt + password verification hash
-├── vault/
-│   ├── prj_a8f3c2d1.enc.json   # encrypted project data
-│   └── prj_b7e4f1a9.enc.json
-└── auth.json                # cached derived key (24h TTL)
+├── config.json              # master salt, password hash, remote config
+├── auth.json                # cached derived key (24h TTL)
+└── vault/                   # ← this is the git repo (when sync enabled)
+    ├── prj_a8f3c2d1.enc.json   # encrypted project data
+    └── prj_b7e4f1a9.enc.json
 ```
+
+`config.json` and `auth.json` live outside the vault directory and are never synced. Only encrypted `.enc.json` files are pushed to the remote.
 
 ### Project Config (`.envs.json`)
 
@@ -183,16 +265,17 @@ line two"
 ## Workflow
 
 ```
-┌─────────────┐     envs push     ┌──────────────────┐
-│  Project A   │ ───────────────→  │   ~/.envs/vault/  │
-│  .env        │                   │   (encrypted)     │
-│  .env.prod   │ ←───────────────  │                   │
-└─────────────┘     envs pull      └──────────────────┘
-                                          ↑
-┌─────────────┐     envs push             │
-│  Project B   │ ─────────────────────────→│
-│  .env        │ ←─────────────────────────│
-└─────────────┘     envs pull
+┌─────────────┐     envs push     ┌──────────────────┐     git push     ┌─────────────────┐
+│  Project A   │ ───────────────→  │   ~/.envs/vault/  │ ─────────────→  │  Remote Git Repo │
+│  .env        │                   │   (encrypted)     │                 │  (private)       │
+│  .env.prod   │ ←───────────────  │                   │ ←─────────────  │                  │
+└─────────────┘     envs pull      └──────────────────┘     git pull     └─────────────────┘
+                                          ↑                                      ↑
+┌─────────────┐     envs push             │                                      │
+│  Project B   │ ─────────────────────────→│          ┌──────────────────┐        │
+│  .env        │ ←─────────────────────────│          │  Another Machine │ ←──────│
+└─────────────┘     envs pull              │          │  ~/.envs/vault/  │ ──────→│
+                                           │          └──────────────────┘
 ```
 
 ## Security Notes

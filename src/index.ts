@@ -7,6 +7,7 @@ import { pullCommand } from "./commands/pull";
 import { diffCommand } from "./commands/diff";
 import { listCommand } from "./commands/list";
 import { envListCommand, envAddCommand } from "./commands/env";
+import { syncCommand, syncDisableCommand, syncStatusCommand } from "./commands/sync";
 
 const program = new Command();
 
@@ -54,5 +55,20 @@ env
   .command("add <name>")
   .description("Add a new environment to current project")
   .action(envAddCommand);
+
+const sync = program
+  .command("sync")
+  .description("Enable or run remote vault sync")
+  .action(syncCommand);
+
+sync
+  .command("disable")
+  .description("Disable remote sync")
+  .action(syncDisableCommand);
+
+sync
+  .command("status")
+  .description("Show remote sync status")
+  .action(syncStatusCommand);
 
 program.parse();

@@ -8,8 +8,14 @@ import {
   readProjectConfig,
   writeProjectConfig,
   encryptAndStoreVault,
+  globalConfigExists,
+  readGlobalConfig,
+  writeGlobalConfig,
+  decryptVault,
 } from "../vault";
 import { parseEnvFile } from "../env-parser";
+import { setupRemoteSync } from "./sync";
+import { gitPushVault } from "../git";
 import type { ProjectConfig, DecryptedVault } from "../types";
 
 const ENV_PATTERN = /^\.env(\..+)?$/;
@@ -27,12 +33,42 @@ const IGNORED_BY_DEFAULT = [".env.local", ".env.development.local", ".env.produc
 export async function initCommand(): Promise<void> {
   const existing = readProjectConfig();
   if (existing) {
-    console.log(chalk.yellow("⚠ Already initialized. Project ID: " + existing.projectId));
+    // Check if vault already has data for this project (e.g. cloned from remote)
+    const key = await authenticate();
+    const vaultData = decryptVault(existing.projectId, key);
+    if (vaultData) {
+      console.log(
+        chalk.yellow(
+          "⚠ Already initialized. Project ID: " + existing.projectId
+        )
+      );
+      console.log(
+        chalk.gray(
+          "  Found vault data for this project. Run `envs pull` to restore your .env files."
+        )
+      );
+    } else {
+      console.log(chalk.yellow("⚠ Already initialized. Project ID: " + existing.projectId));
+    }
     return;
   }
 
+  // Track whether this is a first-time global setup
+  const isFirstTimeSetup = !globalConfigExists();
+
   // Authenticate (sets up master password if first time)
   const key = await authenticate();
+
+  // If first time global setup, offer remote sync
+  if (isFirstTimeSetup) {
+    console.log("");
+    const remote = await setupRemoteSync();
+    if (remote) {
+      const config = readGlobalConfig();
+      config.remote = remote;
+      writeGlobalConfig(config);
+    }
+  }
 
   // Generate project ID
   const projectId = generateProjectId();
@@ -139,6 +175,19 @@ export async function initCommand(): Promise<void> {
 
   if (Object.keys(vaultData.environments).length > 0) {
     encryptAndStoreVault(projectId, projectName, vaultData, key);
+  }
+
+  // Sync to remote if enabled
+  if (Object.keys(vaultData.environments).length > 0) {
+    const globalConf = readGlobalConfig();
+    if (globalConf.remote?.enabled) {
+      const pushed = gitPushVault(projectName);
+      if (pushed) {
+        console.log(chalk.gray("  ✓ Synced ↑"));
+      } else {
+        console.log(chalk.yellow("  ⚠ Remote sync failed. Run `envs sync` to retry."));
+      }
+    }
   }
 
   console.log("");

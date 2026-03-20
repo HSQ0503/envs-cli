@@ -20,10 +20,17 @@ export type DecryptedVault = {
   lastPushedAt: string;
 };
 
+export type RemoteConfig = {
+  enabled: boolean;
+  method: "gh" | "git" | null;
+  repoUrl: string | null;
+};
+
 export type GlobalConfig = {
   salt: string;
   verificationHash: string;
   cacheTTL: number;
+  remote?: RemoteConfig;
 };
 
 export type AuthCache = {
